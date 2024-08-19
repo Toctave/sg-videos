@@ -3,6 +3,9 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 import os
+from datetime import datetime, timezone, timedelta
+
+import jinja2
 
 from bs4 import BeautifulSoup
 from yt_dlp import YoutubeDL
@@ -52,10 +55,14 @@ def scrape_agenda_items():
     for i, it in enumerate(agenda_items):
         it['id'] = i
         soup = BeautifulSoup(it['html'], 'lxml')
-        urls = soup.select('td.title-speakers-td > a')
-        if len(urls) > 0:
-            if 'href' in urls[0].attrs:
-                full_url = program_url + '/' + urls[0].get('href')
+        
+        title_elems = soup.select('.title-speakers-td > a')
+        if len(title_elems) == 0:
+            title_elems = soup.select('.presentation-title > a')
+            
+        if len(title_elems) > 0:
+            if 'href' in title_elems[0].attrs:
+                full_url = program_url + '/' + title_elems[0].get('href')
                 it['presentation_url'] = full_url
 
     for it in agenda_items:
@@ -73,10 +80,13 @@ def scrape_agenda_items():
     return agenda_items
 
 def enrich_agenda_items(agenda_items):
+    type = None
     for i, it in enumerate(agenda_items):
         soup = BeautifulSoup(it['html'], 'lxml')
-        start_time = soup.html.body.find('tr', recursive=False).attrs.get('s_utc', '')
-        end_time = soup.html.body.find('tr', recursive=False).attrs.get('e_utc', '')
+        start_utc = soup.html.body.find('tr', recursive=False).attrs.get('s_utc', '')
+        start_utc = datetime.fromisoformat(start_utc[:-1]).replace(tzinfo=timezone.utc)
+        end_utc = soup.html.body.find('tr', recursive=False).attrs.get('e_utc', '')
+        end_utc = datetime.fromisoformat(end_utc[:-1]).replace(tzinfo=timezone.utc)
 
         presenter_divs = soup.select('.contributor .presenter-details, .author .presenter-details')
         presenter_names = [node.div.a.text for node in presenter_divs]
@@ -91,9 +101,20 @@ def enrich_agenda_items(agenda_items):
             title_elems = soup.select('.presentation-title')
         title = title_elems[0].text
 
+        type_elems = soup.select('.presentation-type')
+        if len(type_elems) > 0:
+            type = type_elems[0].text
+
+        mdt = timezone(timedelta(hours=-6))
+        start_mdt = start_utc.astimezone(mdt)
+        end_mdt = end_utc.astimezone(mdt)
+
         it['title'] = title
-        it['start_time'] = start_time
-        it['end_time'] = end_time
+        it['type'] = type
+        it['start_utc'] = start_utc
+        it['end_utc'] = end_utc
+        it['start_mdt'] = start_mdt
+        it['end_mdt'] = end_mdt
         it['presenters'] = ';'.join(presenter_names)
         it['speakers'] = ';'.join(speaker_names)
 
@@ -110,6 +131,8 @@ def download_videos(agenda_items):
                         info = ydl.extract_info(it['video_url'], download=False)
                         file_path = ydl.prepare_filename(info)
                         it['video_file_path'] = file_path
+                    else:
+                        it['video_file_path'] = 'N/A'
                 except Exception as e:
                     it['video_file_path'] = 'N/A'
                     print(e)
@@ -145,11 +168,25 @@ def rename_videos(agenda_items):
             except Exception as e:
                 print(e)
 
+def generate_website(agenda_items):
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader('templates/'))
+
+    file_names = ['index.html']
+    for file_name in file_names:
+        template = env.get_template(file_name)
+        html = template.render({
+            'agenda_items' : agenda_items,
+        })
+
+        with open(file_name, 'w') as f:
+            f.write(html)
+
 try:
     agenda_items = read_agenda_items('agenda_items.csv')
 except FileNotFoundError:
     agenda_items = scrape_agenda_items()
 
+enrich_agenda_items(agenda_items)
 rename_videos(agenda_items)
-
 write_agenda_items('agenda_items.csv', agenda_items)
+generate_website(agenda_items)
