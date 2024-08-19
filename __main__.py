@@ -133,17 +133,19 @@ def download_videos(agenda_items):
 
 def rename_videos(agenda_items):
     for it in agenda_items:
-        old_video_name = it['video_file_path']
-        if old_video_name != '' and old_video_name != 'N/A':
-            new_video_name = f"{it['title']} - {it['presenters']}"
-            new_video_name = new_video_name.replace('/', '_')
+        old_video_path = it['video_file_path']
+        if old_video_path != '' and old_video_path != 'N/A':
+            new_video_name = f"{it['title']} - {it['presenters']}".replace('/', '_')
             max_length = 200
             if len(new_video_name) > max_length:
                 new_video_name = new_video_name[:max_length - 5] + '(...)'
             new_video_name = new_video_name + ".mp4"
-            it['video_file_path'] = new_video_name
+
+            new_video_path = 'videos/' + new_video_name
+            
+            it['video_file_path'] = new_video_path
             try:
-                os.rename(old_video_name, new_video_name)
+                os.rename(old_video_path, new_video_path)
             except FileNotFoundError as e:
                 print(e)
             except Exception as e:
@@ -153,5 +155,7 @@ try:
     agenda_items = read_agenda_items('agenda_items.csv')
 except FileNotFoundError:
     agenda_items = scrape_agenda_items()
+
+rename_videos(agenda_items)
 
 write_agenda_items('agenda_items.csv', agenda_items)
