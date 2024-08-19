@@ -56,7 +56,6 @@ def scrape_agenda_items():
         if len(urls) > 0:
             if 'href' in urls[0].attrs:
                 full_url = program_url + '/' + urls[0].get('href')
-                print('url:', full_url)
                 it['presentation_url'] = full_url
 
     for it in agenda_items:
@@ -85,7 +84,6 @@ def enrich_agenda_items(agenda_items):
         speaker_divs = soup.select('.contributor .presenter-details.presenting, .author .presenter-details.presenting')
         speaker_names = [node.div.a.text for node in speaker_divs]
 
-        print(i)
         title_elems = soup.select('.title-speakers-td > a')
         if len(title_elems) == 0:
             title_elems = soup.select('.title-speakers-td')
@@ -101,10 +99,6 @@ def enrich_agenda_items(agenda_items):
 
         assert('Authors' not in title)
         assert('Contributors' not in title)
-
-        print(title, start_time, end_time, presenter_names, speaker_names, sep='\n')
-        print()
-
 
 def download_videos(agenda_items):
     with YoutubeDL(params={'http_headers': {'Referer':'https://s2024.conference-program.org'}}) as ydl:
