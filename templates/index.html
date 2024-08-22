@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>SIGGRAPH 2024 Videos</title>
+  </head>
+  <body>
+    <table>
+      <tr>
+        <th>Date</th>
+        <th>Title</th>
+        <th>Type</th>
+        <th>Presenters</th>
+      </tr>
+
+      {% for it in agenda_items %}
+      <tr>
+        <td>
+          {{ it['start_mdt'].strftime('%A %H:%M') }} - {{ it['end_mdt'].strftime('%H:%M') }}
+        </td>
+        <td>
+          {% if 'video_file_path' in it and it['video_file_path']|length > 0 and it['video_file_path'] != 'N/A' %}
+          <a href="{{it['video_file_path']}}"> {{ it['title'] }} </a>
+          {% else %}
+          {{ it['title'] }}
+          {% endif %}
+        </td>
+        <td>
+          {{ it['type'] }}
+        </td>
+        <td>
+          {{ it['presenters'] }}
+        </td>
+        <td>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </body>
+</html>
