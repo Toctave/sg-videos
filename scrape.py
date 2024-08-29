@@ -5,12 +5,12 @@ from selenium.common.exceptions import NoSuchElementException
 import os
 from datetime import datetime, timezone, timedelta
 
-import jinja2
-
 from bs4 import BeautifulSoup
 from yt_dlp import YoutubeDL
 import time
 import csv
+import glob
+import json
 
 PROGRAM_URL = 'https://s2024.conference-program.org'
 MY_LOGIN = 'octave.crespel@inria.fr'
@@ -85,16 +85,30 @@ def scrape_agenda_items():
             except NoSuchElementException as e:
                 continue
 
+            if 'event' in vimeo_url:
+                try:
+                    driver.switch_to.frame(main_video)
+                    time.sleep(1)
+                    fallback_url = driver.find_element(By.CSS_SELECTOR, 'div.player').get_attribute('data-fallback-url')
+                    vimeo_url = 'https://player.vimeo.com/video/' + fallback_url.split('/')[4]
+                except Exception as e:
+                    continue
+
             it['video_url'] = vimeo_url
 
     return agenda_items
 
 def make_video_file_path(agenda_item):
-    video_name = f"{agenda_item['title']} - {agenda_item['presenters']}".replace('/', '_')
-    max_length = 200
-    if len(video_name) > max_length:
-        video_name = video_name[:max_length - 5] + '(...)'
-    video_name = video_name + ".mp4"
+    video_name = agenda_item['title']
+    
+    video_name = video_name.replace('/', '-').replace(' ', '-')
+    video_name = ''.join(c for c in video_name if c.isalnum() or c == '-').lower()
+
+    extension = '.mp4'
+    max_length = 128
+    if len(video_name) + len(extension) > max_length:
+        video_name = video_name[:max_length - len(extension)]
+    video_name = video_name + extension
 
     video_path = 'videos/' + video_name
 
@@ -132,12 +146,12 @@ def enrich_agenda_items(agenda_items):
 
         it['title'] = title
         it['type'] = type
-        it['start_utc'] = start_utc
-        it['end_utc'] = end_utc
-        it['start_mdt'] = start_mdt
-        it['end_mdt'] = end_mdt
-        it['presenters'] = ';'.join(presenter_names)
-        it['speakers'] = ';'.join(speaker_names)
+        it['start_utc'] = str(start_utc)
+        it['end_utc'] = str(end_utc)
+        it['start_mdt'] = str(start_mdt)
+        it['end_mdt'] = str(end_mdt)
+        it['presenters'] = presenter_names
+        it['speakers'] = speaker_names
 
         assert('Authors' not in title)
         assert('Contributors' not in title)
@@ -146,42 +160,39 @@ def download_videos(agenda_items):
     failed_downloads = []
     with YoutubeDL(params={'http_headers': {'Referer':'https://s2024.conference-program.org'}}) as ydl:
         for i, it in enumerate(agenda_items):
-            print(f"Downloading video for item {i}/{len(agenda_items)} : {it['title']}")
-            
-            video_file_path = make_video_file_path(it)
-            if os.path.isfile(video_file_path):
-                print(f"Video file '{video_file_path}' already exists.")
-                it['video_file_path'] = video_file_path
+            print(f"Downloading video for item {i + 1}/{len(agenda_items)} : {it['title']}")
+
+            prev_video_file_path = it.get('video_file_path')
+            new_video_file_path = make_video_file_path(it)
+            if prev_video_file_path and len(prev_video_file_path) > 0 and os.path.isfile(prev_video_file_path):
+                print(f"Video file '{prev_video_file_path}' already exists.")
+                if prev_video_file_path != new_video_file_path:
+                    os.rename(prev_video_file_path, new_video_file_path)
+                    it['video_file_path'] = new_video_file_path
             else:
                 try:
                     if 'video_url' in it and len(it['video_url']) > 0:
                         info = ydl.extract_info(it['video_url'], download=False)
                         download_file_path = ydl.prepare_filename(info)
                         ydl.process_info(info)
-                        it['video_file_path'] = video_file_path
-                        os.rename(download_file_path, video_file_path)
+                        os.rename(download_file_path, new_video_file_path)
+                        it['video_file_path'] = new_video_file_path
                     else:
-                        it['video_file_path'] = 'N/A'
+                        it['video_file_path'] = ''
                 except Exception as e:
                     failed_downloads.append(it)
 
-                    it['video_file_path'] = 'N/A'
+                    it['video_file_path'] = ''
                     print(f"Video download failed! {it['title']}")
                     print(e)
     return failed_downloads
 
-def generate_website(agenda_items):
-    env = jinja2.Environment(loader=jinja2.FileSystemLoader('templates/'))
-
-    file_names = ['index.html']
-    for file_name in file_names:
-        template = env.get_template(file_name)
-        html = template.render({
-            'agenda_items' : agenda_items,
-        })
-
-        with open(file_name, 'w') as f:
-            f.write(html)
+def cleanup_video_files(agenda_items):
+    video_file_names = set(it['video_file_path'] for it in agenda_items if 'video_file_path' in it and len(it['video_file_path']) > 0)
+    for file_name in glob.glob('videos/*'):
+        if file_name not in video_file_names:
+            print(file_name)
+            os.remove(file_name)
 
 try:
     agenda_items = read_agenda_items(AGENDA_ITEMS_FILE)
@@ -189,21 +200,21 @@ except FileNotFoundError:
     agenda_items = scrape_agenda_items()
 
 enrich_agenda_items(agenda_items)
-failed = download_videos(agenda_items)
-
-generate_website(agenda_items)
-
-driver = start_driver()
-for it in failed:
-    try:
-        driver.get(it['presentation_url'])
-        main_video = driver.find_element(By.ID, 'main_video')
-        driver.switch_to.frame(main_video)
-        time.sleep(1)
-        fallback_url = driver.find_element(By.CSS_SELECTOR, 'div.player').get_attribute('data-fallback-url')
-        video_url = 'https://player.vimeo.com/video/' + fallback_url.split('/')[4]
-        it['video_url'] = video_url
-    except Exception as e:
-        print(e)
+# failed = download_videos(agenda_items)
 
 write_agenda_items(AGENDA_ITEMS_FILE, agenda_items)
+
+with open('index_template.js') as index_js:
+    index_js_code = index_js.read()
+
+agenda_items_stripped = []
+for it in agenda_items:
+    it_stripped = dict(it)
+    del it_stripped['html']
+    agenda_items_stripped.append(it_stripped)
+
+with open('index.js', 'w') as index_js:
+    index_js.write(f'const data = {json.dumps(agenda_items_stripped)};\n')
+    index_js.write(index_js_code)
+
+# print(json.dumps(agenda_items))
