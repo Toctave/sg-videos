@@ -12,6 +12,7 @@ from yt_dlp import YoutubeDL
 import time
 import csv
 
+PROGRAM_URL = 'https://s2024.conference-program.org'
 MY_LOGIN = 'octave.crespel@inria.fr'
 MY_PASSWORD = '24-6391'
 AGENDA_ITEMS_FILE = 'agenda_items.csv'
@@ -29,11 +30,10 @@ def write_agenda_items(file_name, agenda_items):
         dict_writer.writeheader()
         dict_writer.writerows(agenda_items)
 
-def scrape_agenda_items():
+def start_driver():
     # Go to Login Page
     driver = webdriver.Firefox()
-    program_url = 'https://s2024.conference-program.org'
-    login_url = f'{program_url}/wp-login.php'
+    login_url = f'{PROGRAM_URL}/wp-login.php'
 
     driver.get(login_url)
     assert("Log In" in driver.title)
@@ -50,6 +50,11 @@ def scrape_agenda_items():
     submit_elem = driver.find_element(By.ID, 'wp-submit')
     submit_elem.click()
 
+    return driver
+
+def scrape_agenda_items():
+    driver = start_driver()
+    
     # List agenda items
     agenda_items = [{'html' : it.get_property('outerHTML')} for it in driver.find_elements(By.CSS_SELECTOR, '.agenda-item')]
     print(f"Found {len(agenda_items)} agenda items.")
@@ -64,7 +69,7 @@ def scrape_agenda_items():
             
         if len(title_elems) > 0:
             if 'href' in title_elems[0].attrs:
-                full_url = program_url + '/' + title_elems[0].get('href')
+                full_url = PROGRAM_URL + '/' + title_elems[0].get('href')
                 it['presentation_url'] = full_url
         print(f"Item {i} : url = ", it.get('presentation_url'))
 
@@ -75,7 +80,8 @@ def scrape_agenda_items():
             driver.get(url)
 
             try:
-                vimeo_url = driver.find_element(By.ID, 'main_video').get_property('src')
+                main_video = driver.find_element(By.ID, 'main_video')
+                vimeo_url = main_video.get_property('src')
             except NoSuchElementException as e:
                 continue
 
@@ -137,9 +143,10 @@ def enrich_agenda_items(agenda_items):
         assert('Contributors' not in title)
 
 def download_videos(agenda_items):
+    failed_downloads = []
     with YoutubeDL(params={'http_headers': {'Referer':'https://s2024.conference-program.org'}}) as ydl:
         for i, it in enumerate(agenda_items):
-            print(f"Downloading video for item {i}/{len(agenda_items)}")
+            print(f"Downloading video for item {i}/{len(agenda_items)} : {it['title']}")
             
             video_file_path = make_video_file_path(it)
             if os.path.isfile(video_file_path):
@@ -156,8 +163,12 @@ def download_videos(agenda_items):
                     else:
                         it['video_file_path'] = 'N/A'
                 except Exception as e:
+                    failed_downloads.append(it)
+
                     it['video_file_path'] = 'N/A'
+                    print(f"Video download failed! {it['title']}")
                     print(e)
+    return failed_downloads
 
 def generate_website(agenda_items):
     env = jinja2.Environment(loader=jinja2.FileSystemLoader('templates/'))
@@ -178,8 +189,21 @@ except FileNotFoundError:
     agenda_items = scrape_agenda_items()
 
 enrich_agenda_items(agenda_items)
-# download_videos(agenda_items)
-# write_agenda_items(AGENDA_ITEMS_FILE, agenda_items)
+failed = download_videos(agenda_items)
 
-# write_agenda_items(AGENDA_ITEMS_FILE, agenda_items)
 generate_website(agenda_items)
+
+driver = start_driver()
+for it in failed:
+    try:
+        driver.get(it['presentation_url'])
+        main_video = driver.find_element(By.ID, 'main_video')
+        driver.switch_to.frame(main_video)
+        time.sleep(1)
+        fallback_url = driver.find_element(By.CSS_SELECTOR, 'div.player').get_attribute('data-fallback-url')
+        video_url = 'https://player.vimeo.com/video/' + fallback_url.split('/')[4]
+        it['video_url'] = video_url
+    except Exception as e:
+        print(e)
+
+write_agenda_items(AGENDA_ITEMS_FILE, agenda_items)
