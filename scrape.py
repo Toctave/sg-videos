@@ -4,6 +4,7 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 import os
 from datetime import datetime, timezone, timedelta
+import time
 
 from bs4 import BeautifulSoup
 from yt_dlp import YoutubeDL
@@ -18,14 +19,14 @@ MY_PASSWORD = '24-6391'
 AGENDA_ITEMS_FILE = 'agenda_items.csv'
 
 def read_agenda_items(file_name):
-    with open(file_name, 'r', newline='') as f:
+    with open(file_name, 'r', newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         agenda_items = [dict(row) for row in reader]
     return agenda_items
 
 def write_agenda_items(file_name, agenda_items):
     all_keys = sorted(list(set().union(*(it.keys() for it in agenda_items))))
-    with open(file_name, 'w', newline='') as output_file:
+    with open(file_name, 'w', newline='', encoding='utf-8') as output_file:
         dict_writer = csv.DictWriter(output_file, all_keys)
         dict_writer.writeheader()
         dict_writer.writerows(agenda_items)
@@ -50,15 +51,20 @@ def start_driver():
     submit_elem = driver.find_element(By.ID, 'wp-submit')
     submit_elem.click()
 
+    time.sleep(2)
+
     return driver
 
-def scrape_agenda_items():
+def scrape_agenda_items(limit=None):
     driver = start_driver()
     
     # List agenda items
     agenda_items = [{'html' : it.get_property('outerHTML')} for it in driver.find_elements(By.CSS_SELECTOR, '.agenda-item')]
     print(f"Found {len(agenda_items)} agenda items.")
-
+    if limit is not None:
+        agenda_items = agenda_items[:limit]
+        print(f"Clamped to {len(agenda_items)}.")
+        
     for i, it in enumerate(agenda_items):
         it['id'] = i
         soup = BeautifulSoup(it['html'], 'lxml')
@@ -158,7 +164,7 @@ def enrich_agenda_items(agenda_items):
 
 def download_videos(agenda_items):
     failed_downloads = []
-    with YoutubeDL(params={'http_headers': {'Referer':'https://s2024.conference-program.org'}}) as ydl:
+    with YoutubeDL(params={'http_headers': {'Referer':PROGRAM_URL}}) as ydl:
         for i, it in enumerate(agenda_items):
             print(f"Downloading video for item {i + 1}/{len(agenda_items)} : {it['title']}")
 
@@ -194,27 +200,27 @@ def cleanup_video_files(agenda_items):
             print(file_name)
             os.remove(file_name)
 
-try:
-    agenda_items = read_agenda_items(AGENDA_ITEMS_FILE)
-except FileNotFoundError:
-    agenda_items = scrape_agenda_items()
+if __name__ == '__main__':
+    try:
+        agenda_items = read_agenda_items(AGENDA_ITEMS_FILE)
+    except FileNotFoundError:
+        agenda_items = scrape_agenda_items()
+        enrich_agenda_items(agenda_items)
+        write_agenda_items(AGENDA_ITEMS_FILE, agenda_items)
 
-enrich_agenda_items(agenda_items)
-# failed = download_videos(agenda_items)
+    failed = download_videos(agenda_items)
 
-write_agenda_items(AGENDA_ITEMS_FILE, agenda_items)
+    with open('index_template.js', encoding='utf-8') as index_js:
+        index_js_code = index_js.read()
 
-with open('index_template.js') as index_js:
-    index_js_code = index_js.read()
+    agenda_items_stripped = []
+    for it in agenda_items:
+        it_stripped = dict(it)
+        del it_stripped['html']
+        agenda_items_stripped.append(it_stripped)
 
-agenda_items_stripped = []
-for it in agenda_items:
-    it_stripped = dict(it)
-    del it_stripped['html']
-    agenda_items_stripped.append(it_stripped)
-
-with open('index.js', 'w') as index_js:
-    index_js.write(f'const data = {json.dumps(agenda_items_stripped)};\n')
-    index_js.write(index_js_code)
+    with open('index.js', 'w', encoding='utf-8') as index_js:
+        index_js.write(f'const data = {json.dumps(agenda_items_stripped)};\n')
+        index_js.write(index_js_code)
 
 # print(json.dumps(agenda_items))
