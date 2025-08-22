@@ -5,18 +5,18 @@ from selenium.common.exceptions import NoSuchElementException
 import os
 from datetime import datetime, timezone, timedelta
 import time
-
 from bs4 import BeautifulSoup
 from yt_dlp import YoutubeDL
 import time
 import csv
 import glob
 import json
+from pathlib import Path
 
-PROGRAM_URL = 'https://s2024.conference-program.org'
-MY_LOGIN = 'octave.crespel@inria.fr'
-MY_PASSWORD = '24-6391'
-AGENDA_ITEMS_FILE = 'agenda_items.csv'
+PROGRAM_URL = 'https://s2025.conference-schedule.org'
+MY_LOGIN = 'fhahnlei@cs.washington.edu'
+MY_PASSWORD = '25-9262'
+AGENDA_ITEMS_FILE = 'agenda_items-2025.csv'
 
 def read_agenda_items(file_name):
     with open(file_name, 'r', newline='', encoding='utf-8') as f:
@@ -170,11 +170,15 @@ def download_videos(agenda_items):
 
             prev_video_file_path = it.get('video_file_path')
             new_video_file_path = make_video_file_path(it)
+            Path(new_video_file_path).parent.mkdir(parents=True, exist_ok=True)
+
             if prev_video_file_path and len(prev_video_file_path) > 0 and os.path.isfile(prev_video_file_path):
                 print(f"Video file '{prev_video_file_path}' already exists.")
                 if prev_video_file_path != new_video_file_path:
                     os.rename(prev_video_file_path, new_video_file_path)
                     it['video_file_path'] = new_video_file_path
+            elif new_video_file_path and len(new_video_file_path) > 0 and os.path.isfile(new_video_file_path):
+                print(f"Video file '{new_video_file_path}' already exists.")
             else:
                 try:
                     if 'video_url' in it and len(it['video_url']) > 0:
@@ -189,16 +193,9 @@ def download_videos(agenda_items):
                     failed_downloads.append(it)
 
                     it['video_file_path'] = ''
-                    print(f"Video download failed! {it['title']}")
+                    print(f"Video download failed! {it['title']} : {e}")
                     print(e)
     return failed_downloads
-
-def cleanup_video_files(agenda_items):
-    video_file_names = set(it['video_file_path'] for it in agenda_items if 'video_file_path' in it and len(it['video_file_path']) > 0)
-    for file_name in glob.glob('videos/*'):
-        if file_name not in video_file_names:
-            print(file_name)
-            os.remove(file_name)
 
 if __name__ == '__main__':
     try:
